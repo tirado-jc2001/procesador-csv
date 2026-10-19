@@ -9,110 +9,129 @@ import streamlit as st
 
 # Configuración inicial de la página
 st.set_page_config(
-    page_title="Comparativa de Modelos - Tega", page_icon="📊", layout="wide"
-)
-
-st.title("🚀 Analizador y Comparador de Modelos (Actual vs Propuesto)")
-st.write(
-    "Sube tus archivos CSV correspondientes, configura los offsets de potencia,"
-    " rangos y colores para generar las estadísticas y gráficas en alta"
-    " calidad."
+    page_title="Comparativa de Modelos - Tega Industries",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ==========================================
-# 1. SUBIDA DE ARCHIVOS EN STREAMLIT
+#  BARRA LATERAL (SIDEBAR)
 # ==========================================
-col_up1, col_up2 = st.columns(2)
+with st.sidebar:
+  # 1. Logo de la Empresa (si subes 'logo.png' a GitHub úsalo aquí)
+  try:
+    st.image(
+        "logo.png", use_container_width=True
+    )  # O cambia 'logo.png' por una URL directa si prefieres
+  except Exception:
+    st.title("🏢 TEGA INDUSTRIES")
 
-with col_up1:
-  st.subheader("1️⃣ Modelo Actual")
+  st.markdown("---")
+  st.header("📂 Carga de Archivos")
+
   archivo_actual = st.file_uploader(
-      "Sube el CSV del Modelo Actual", type=["csv"], key="actual"
+      "1️⃣ Modelo Actual (CSV)", type=["csv"], key="actual"
+  )
+  archivo_propuesto = st.file_uploader(
+      "2️⃣ Modelo Propuesto (CSV)", type=["csv"], key="propuesto"
   )
 
-with col_up2:
-  st.subheader("2️⃣ Modelo Propuesto")
-  archivo_propuesto = st.file_uploader(
-      "Sube el CSV del Modelo Propuesto", type=["csv"], key="propuesto"
+  st.markdown("---")
+  st.header("⚙️ Offsets de Potencia")
+  potencia_add_actual = st.number_input(
+      "Potencia a sumar ACTUAL (MW):", value=0.0, step=0.1, format="%.2f"
   )
+  potencia_add_propuesto = st.number_input(
+      "Potencia a sumar PROPUESTO (MW):", value=0.0, step=0.1, format="%.2f"
+  )
+
+  st.markdown("---")
+  st.header("🎨 Estilo y Rango")
+  col_s1, col_s2 = st.columns(2)
+  with col_s1:
+    x_min = st.number_input(
+        "Segundo INICIO", value=8.0, step=0.1, format="%.2f"
+    )
+  with col_s2:
+    x_max = st.number_input(
+        "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
+    )
+
+  color_actual = st.color_picker(
+      "Color Modelo Actual", value="#A9A9A9"
+  )  # Gris
+  color_propuesto = st.color_picker(
+      "Color Modelo Propuesto", value="#00A2E8"
+  )  # Azul TEGA
+
+  # Firma discreta al final de la barra lateral
+  st.markdown("---")
+  st.caption("🛠️ **Desarrollado por:** Julio Tirado")
+  st.caption("💡 *Simulación y Análisis de Proyectos*")
+
+
+# ==========================================
+# PANTALLA PRINCIPAL
+# ==========================================
+st.title("🚀 Panel de Análisis y Comparación de Modelos DEM")
+st.write(
+    "Plataforma interactiva para la evaluación de parámetros de simulación"
+    " (Fuerza, Energía y Potencia)."
+)
+
+
+# Función de limpieza y transformación
+def limpiar_y_transformar(uploaded_file, offset_potencia):
+  texto_archivo = uploaded_file.getvalue().decode("utf-8", errors="ignore")
+  lineas = texto_archivo.splitlines()
+
+  fila_encabezado = 0
+  for i, linea in enumerate(lineas):
+    if "TIME" in linea.upper():
+      fila_encabezado = i
+      break
+
+  df = pd.read_csv(io.StringIO(texto_archivo), skiprows=fila_encabezado)
+  df.columns = df.columns.str.strip()
+
+  col_potencia = [col for col in df.columns if "Power" in col][0]
+  col_energia = [col for col in df.columns if "Kinetic" in col][0]
+  col_fuerza = [col for col in df.columns if "Compressive" in col][0]
+
+  df["Potencia"] = (df[col_potencia] * -1 / 1_000_000) + offset_potencia
+  df = df.rename(columns={col_energia: "Energia", col_fuerza: "Fuerza"})
+
+  if "TIME" not in df.columns and "Time" in df.columns:
+    df = df.rename(columns={"Time": "TIME"})
+
+  return df[["TIME", "Fuerza", "Energia", "Potencia"]]
+
 
 if archivo_actual is not None and archivo_propuesto is not None:
-  st.markdown("---")
-  st.subheader("⚙️ Configuración de Offsets de Potencia")
-
-  # Solicitamos los valores de MW para ambos modelos de forma interactiva en la web
-  col_off1, col_off2 = st.columns(2)
-  with col_off1:
-    potencia_add_actual = st.number_input(
-        "Ingrese la potencia (MW) a sumar para el modelo ACTUAL:",
-        value=0.0,
-        step=0.1,
-        format="%.2f",
-    )
-  with col_off2:
-    potencia_add_propuesto = st.number_input(
-        "Ingrese la potencia (MW) a sumar para el modelo PROPUESTO:",
-        value=0.0,
-        step=0.1,
-        format="%.2f",
-    )
-
-
-  # Función ultra-robusta adaptada para recibir los archivos subidos en Streamlit
-  def limpiar_y_transformar(uploaded_file, offset_potencia):
-    """Función ultra-robusta: Encuentra los encabezados y columnas mediante
-
-    palabras clave, sin importar cómo el software decida nombrar la variable
-    (Q01, CF, KE, etc.)
-    """
-    texto_archivo = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-    lineas = texto_archivo.splitlines()
-
-    # Buscar dinámicamente en qué línea está el encabezado "TIME"
-    fila_encabezado = 0
-    for i, linea in enumerate(lineas):
-      if "TIME" in linea.upper():
-        fila_encabezado = i
-        break
-
-    df = pd.read_csv(io.StringIO(texto_archivo), skiprows=fila_encabezado)
-    df.columns = df.columns.str.strip()
-
-    # Encontrar las columnas buscando palabras clave que nunca cambian
-    col_potencia = [col for col in df.columns if "Power" in col][0]
-    col_energia = [col for col in df.columns if "Kinetic" in col][0]
-    col_fuerza = [col for col in df.columns if "Compressive" in col][0]
-
-    # Aplicar la fórmula matemática
-    df["Potencia"] = (df[col_potencia] * -1 / 1_000_000) + offset_potencia
-
-    # Renombrar las columnas encontradas
-    df = df.rename(columns={col_energia: "Energia", col_fuerza: "Fuerza"})
-
-    # Asegurar que la columna de tiempo se llame TIME en mayúsculas
-    if "TIME" not in df.columns and "Time" in df.columns:
-      df = df.rename(columns={"Time": "TIME"})
-
-    return df[["TIME", "Fuerza", "Energia", "Potencia"]]
-
-
   try:
-    # Procesamos ambos archivos usando tu lógica exacta
     df_actual = limpiar_y_transformar(archivo_actual, potencia_add_actual)
     df_propuesto = limpiar_y_transformar(
         archivo_propuesto, potencia_add_propuesto
     )
 
-    st.success(
-        "✅ Datos de ambos modelos limpiados y transformados exitosamente."
-        " Listos para las gráficas."
-    )
-
     columnas_stats = ["Fuerza", "Energia", "Potencia"]
 
-    # ==========================================
-    # 2. CÁLCULO DE ESTADÍSTICAS Y TABLAS
-    # ==========================================
+    # Tarjetas Métricas Rápidas (Resumen Visual)
+    st.markdown("### 📊 Resumen Ejecutivo (Medianas)")
+    m_act = df_actual[columnas_stats].median()
+    m_prop = df_propuesto[columnas_stats].median()
+    v_pct = ((m_prop - m_act) / m_act) * 100
+
+    c_m1, c_m2, c_m3 = st.columns(3)
+    c_m1.metric("Fuerza Compresiva", f"{m_prop['Fuerza']:.1f} N", f"{v_pct['Fuerza']:+.2f}%")
+    c_m2.metric("Energía Cinética", f"{m_prop['Energia']:.1f} J", f"{v_pct['Energia']:+.2f}%")
+    c_m3.metric("Potencia Consumida", f"{m_prop['Potencia']:.2f} MW", f"{v_pct['Potencia']:+.2f}%")
+
+    st.markdown("---")
+
+    # Tablas Estadísticas Organizadas
+    st.subheader("📈 Estadísticas Detalladas")
     stats_actual = df_actual[columnas_stats].agg(
         ["mean", "max", "min", "median"]
     )
@@ -123,34 +142,24 @@ if archivo_actual is not None and archivo_propuesto is not None:
     stats_actual.index = ["promedio", "max", "min", "mediana"]
     stats_propuesto.index = ["promedio", "max", "min", "mediana"]
 
-    st.markdown("---")
-    st.subheader("📈 Estadísticas y Comparativa de Modelos")
-
     tab1, tab2, tab3 = st.tabs(
         ["Modelo Actual", "Modelo Propuesto", "Comparativa de Medianas"]
     )
 
     with tab1:
-      st.write("### Estadísticas: MODELO ACTUAL")
       st.dataframe(stats_actual.style.format("{:.2f}"), use_container_width=True)
 
     with tab2:
-      st.write("### Estadísticas: MODELO PROPUESTO")
       st.dataframe(
           stats_propuesto.style.format("{:.2f}"), use_container_width=True
       )
 
     with tab3:
-      mediana_actual = stats_actual.loc["mediana"]
-      mediana_propuesta = stats_propuesto.loc["mediana"]
-      variacion_pct = ((mediana_propuesta - mediana_actual) / mediana_actual) * 100
-
       tabla_comparativa = pd.DataFrame({
-          "Mediana Actual": mediana_actual,
-          "Mediana Propuesta": mediana_propuesta,
-          "Variación (%)": variacion_pct,
+          "Mediana Actual": m_act,
+          "Mediana Propuesta": m_prop,
+          "Variación (%)": v_pct,
       })
-      st.write("### Comparativa de Medianas")
       st.dataframe(
           tabla_comparativa.style.format({
               "Mediana Actual": "{:.2f}",
@@ -160,40 +169,17 @@ if archivo_actual is not None and archivo_propuesto is not None:
           use_container_width=True,
       )
 
-    # ==========================================
-    # 3. CONTROLES DE RANGO DE TIEMPO Y COLORES
-    # ==========================================
+    # Gráficas
     st.markdown("---")
-    st.subheader("⏱️ Configuración de Visualización y Gráficas")
-
-    col_cfg1, col_cfg2, col_cfg3, col_cfg4 = st.columns(4)
-
-    with col_cfg1:
-      x_min = st.number_input(
-          "Segundo INICIO", value=8.0, step=0.1, format="%.2f"
-      )
-    with col_cfg2:
-      x_max = st.number_input(
-          "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
-      )
-    with col_cfg3:
-      color_actual = st.color_picker("Color Modelo Actual", value="#A9A9A9")
-    with col_cfg4:
-      color_propuesto = st.color_picker(
-          "Color Modelo Propuesto (Tega)", value="#00A2E8"
-      )
+    st.subheader("📉 Gráficas Comparativas de Desempeño")
 
     salto_x = 0.20 if (x_max - x_min) <= 3 else 0.50
     sns.set_style("white")
 
-
-    # ==========================================
-    # 4. FUNCIÓN DE GRÁFICA COMPARATIVA
-    # ==========================================
     def mostrar_grafica_comparativa(
         columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
     ):
-      fig, ax = plt.subplots(figsize=(16, 5))
+      fig, ax = plt.subplots(figsize=(16, 4.8))
 
       df_act_filt = df_actual[
           (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
@@ -210,7 +196,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
         plt.close(fig)
         return
 
-      # Curvas de datos reales
       sns.lineplot(
           data=df_act_filt,
           x="TIME",
@@ -228,7 +213,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
           linewidth=1.2,
       )
 
-      # Líneas de Tendencia
       z_act = np.polyfit(df_act_filt["TIME"], df_act_filt[columna_y], 1)
       p_act = np.poly1d(z_act)
       ax.plot(
@@ -249,7 +233,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
           linewidth=2,
       )
 
-      # Medianas
       mediana_act = df_act_filt[columna_y].median()
       mediana_prop = df_prop_filt[columna_y].median()
 
@@ -335,24 +318,18 @@ if archivo_actual is not None and archivo_propuesto is not None:
       plt.tight_layout()
       st.pyplot(fig)
 
-      # Descarga en PNG a 300 DPI
       img_buffer = io.BytesIO()
       fig.savefig(img_buffer, format="png", dpi=300, bbox_inches="tight")
       img_buffer.seek(0)
 
       st.download_button(
-          label=f"📥 Descargar Gráfica '{titulo}' en Alta Calidad (PNG 300 DPI)",
+          label=f"📥 Descargar Gráfica '{titulo}' (PNG 300 DPI)",
           data=img_buffer,
           file_name=f"grafica_{columna_y.lower()}.png",
           mime="image/png",
       )
       plt.close(fig)
 
-
-    # ==========================================
-    # 5. RENDERIZAR LAS GRÁFICAS
-    # ==========================================
-    st.markdown("---")
     mostrar_grafica_comparativa(
         "Fuerza",
         "FUERZA COMPRESIVA",
@@ -371,8 +348,18 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
   except Exception as e:
     st.error(f"Error al procesar los archivos: {e}")
+
 else:
   st.info(
-      "👆 Por favor, sube ambos archivos CSV en la parte superior para comenzar"
+      "👈 Por favor, sube ambos archivos CSV en la barra lateral para iniciar"
       " el análisis."
   )
+
+# Pie de página sutil en la pantalla principal
+st.markdown("---")
+st.markdown(
+    "<div style='text-align: center; color: gray; font-size: 0.85em;'>"
+    "Desarrollado por Julio Tirado — Tega Industries ©"
+    "</div>",
+    unsafe_allow_html=True,
+)
