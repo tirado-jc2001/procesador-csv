@@ -22,7 +22,7 @@ with st.sidebar:
   # 1. Logo de la Empresa (si subes 'logo.png' a GitHub úsalo aquí)
   try:
     st.image(
-        "logo.png", use_container_width=True
+        "https://tegaindustries.hiringroom.com/data/accounts/tegaindustries/profile.jpg?version=", use_container_width=True
     )  # O cambia 'logo.png' por una URL directa si prefieres
   except Exception:
     st.title("🏢 TEGA INDUSTRIES")
@@ -68,7 +68,7 @@ with st.sidebar:
   # Firma discreta al final de la barra lateral
   st.markdown("---")
   st.caption("🛠️ **Desarrollado por:** Julio Tirado")
-  st.caption("💡 *Simulación y Análisis de Proyectos*")
+  st.caption("💡 *Intern PMG Mill*")
 
 
 # ==========================================
