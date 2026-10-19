@@ -19,28 +19,58 @@ st.write(
 )
 
 
-# Función para encontrar la fila donde empiezan los datos tabulares
-def cargar_csv_inteligente(file_bytes):
-  # Leer líneas como texto para encontrar el encabezado real
+# Función para cargar CSV de EDEM/Ansys y mapear nombres de columnas automáticamente
+def cargar_y_mapear_csv(file_bytes):
   content = file_bytes.getvalue().decode("utf-8", errors="ignore").splitlines()
 
+  # 1. Encontrar la línea del encabezado
   header_line = 0
-  for i, line in enumerate(content[:50]):  # Inspecciona las primeras 50 filas
-    # Si encuentra las palabras clave de la tabla, esa es la fila del encabezado
+  for i, line in enumerate(content[:60]):
     if ("TIME" in line or "Time" in line) and (
-        "Fuerza" in line or "Force" in line or "Energia" in line
+        "Compressive" in line
+        or "Kinetic" in line
+        or "Power" in line
+        or "CF" in line
+        or "Fuerza" in line
     ):
       header_line = i
       break
 
-  # Rebobinar el buffer de lectura
   file_bytes.seek(0)
-
-  # Cargar el dataframe omitiendo el encabezado previo
   df = pd.read_csv(
       file_bytes, skiprows=header_line, sep=None, engine="python", on_bad_lines="skip"
   )
   df.columns = df.columns.str.strip()
+
+  # 2. Mapeo inteligente de nombres de columnas
+  mapping = {}
+  for col in df.columns:
+    col_upper = col.upper()
+    if "TIME" in col_upper:
+      mapping[col] = "TIME"
+    elif (
+        "CF" in col_upper
+        or "COMPRESSIVE" in col_upper
+        or "FUERZA" in col_upper
+        or "FORCE" in col_upper
+    ):
+      mapping[col] = "Fuerza"
+    elif (
+        "KE" in col_upper
+        or "KINETIC" in col_upper
+        or "ENERGIA" in col_upper
+        or "ENERGY" in col_upper
+    ):
+      mapping[col] = "Energia"
+    elif (
+        "Q01" in col_upper
+        or "POWER" in col_upper
+        or "POTENCIA" in col_upper
+        or "GEOMETRY" in col_upper
+    ):
+      mapping[col] = "Potencia"
+
+  df.rename(columns=mapping, inplace=True)
   return df
 
 
@@ -63,44 +93,42 @@ with col_up2:
 
 if archivo_actual is not None and archivo_propuesto is not None:
   try:
-    # Cargar CSV omitiendo las líneas de metadata iniciales
-    df_actual = cargar_csv_inteligente(archivo_actual)
-    df_propuesto = cargar_csv_inteligente(archivo_propuesto)
+    df_actual = cargar_y_mapear_csv(archivo_actual)
+    df_propuesto = cargar_y_mapear_csv(archivo_propuesto)
 
-    st.success("¡Ambos archivos cargados y procesados correctamente!")
+    columnas_requeridas = ["TIME", "Fuerza", "Energia", "Potencia"]
 
-    columnas = ["Fuerza", "Energia", "Potencia"]
+    # Validar que se hayan mapeado todas las columnas correctamente
+    faltantes_act = [
+        c for c in columnas_requeridas if c not in df_actual.columns
+    ]
+    faltantes_prop = [
+        c for c in columnas_requeridas if c not in df_propuesto.columns
+    ]
 
-    # Normalizar nombre de columna TIME si viene en minúsculas
-    for df in [df_actual, df_propuesto]:
-      if "TIME" not in df.columns and "Time" in df.columns:
-        df.rename(columns={"Time": "TIME"}, inplace=True)
-
-    # Verificar si las columnas existen
-    columnas_validas = (
-        all(col in df_actual.columns for col in columnas)
-        and all(col in df_propuesto.columns for col in columnas)
-        and ("TIME" in df_actual.columns)
-        and ("TIME" in df_propuesto.columns)
-    )
-
-    if not columnas_validas:
+    if faltantes_act or faltantes_prop:
       st.error(
-          "⚠️ No se encontraron todas las columnas requeridas ('Fuerza',"
-          " 'Energia', 'Potencia' y 'TIME').\n\n"
-          f"Columnas detectadas en Actual: {list(df_actual.columns)}"
+          f"⚠️ No se pudieron identificar todas las columnas requeridas.\n\n"
+          f"Columnas halladas en Actual: {list(df_actual.columns)}\n\n"
+          f"Columnas halladas en Propuesto: {list(df_propuesto.columns)}"
       )
     else:
-      # Convertir columnas a formato numérico por seguridad
-      for col in columnas + ["TIME"]:
+      st.success("¡Ambos archivos cargados y procesados correctamente!")
+
+      # Convertir a numérico por seguridad
+      for col in columnas_requeridas:
         df_actual[col] = pd.to_numeric(df_actual[col], errors="coerce")
         df_propuesto[col] = pd.to_numeric(df_propuesto[col], errors="coerce")
+
+      columnas_stats = ["Fuerza", "Energia", "Potencia"]
 
       # ==========================================
       # 2. CÁLCULO DE ESTADÍSTICAS
       # ==========================================
-      stats_actual = df_actual[columnas].agg(["mean", "max", "min", "median"])
-      stats_propuesto = df_propuesto[columnas].agg(
+      stats_actual = df_actual[columnas_stats].agg(
+          ["mean", "max", "min", "median"]
+      )
+      stats_propuesto = df_propuesto[columnas_stats].agg(
           ["mean", "max", "min", "median"]
       )
 
@@ -116,7 +144,9 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
       with tab1:
         st.write("### Estadísticas: MODELO ACTUAL")
-        st.dataframe(stats_actual.style.format("{:.2f}"), use_container_width=True)
+        st.dataframe(
+            stats_actual.style.format("{:.2f}"), use_container_width=True
+        )
 
       with tab2:
         st.write("### Estadísticas: MODELO PROPUESTO")
@@ -125,7 +155,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
         )
 
       with tab3:
-        # Comparativa porcentual de Medianas
         mediana_actual = stats_actual.loc["mediana"]
         mediana_propuesta = stats_propuesto.loc["mediana"]
         variacion_pct = (
@@ -148,7 +177,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
         )
 
       # ==========================================
-      # 3. CONFIGURACIÓN DE RANGO DE TIEMPO INTERACTIVO
+      # 3. RANGO DE TIEMPO INTERACTIVO
       # ==========================================
       st.markdown("---")
       st.subheader("⏱️ Configuración del Rango de Tiempo para las Gráficas")
@@ -170,14 +199,13 @@ if archivo_actual is not None and archivo_propuesto is not None:
       sns.set_style("white")
 
       # ==========================================
-      # 4. FUNCIÓN DE GRÁFICA ADAPTADA A STREAMLIT
+      # 4. FUNCIÓN DE GRÁFICA
       # ==========================================
       def mostrar_grafica_comparativa(
           columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
       ):
         fig, ax = plt.subplots(figsize=(16, 5))
 
-        # Filtrar datos al rango seleccionado
         df_act_filt = df_actual[
             (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
         ].dropna(subset=["TIME", columna_y])
@@ -193,7 +221,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
           plt.close(fig)
           return
 
-        # Graficar curvas reales
+        # Curvas reales
         sns.lineplot(
             data=df_act_filt,
             x="TIME",
@@ -211,7 +239,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
             linewidth=1.2,
         )
 
-        # Líneas de Tendencia
+        # Tendencias
         z_act = np.polyfit(df_act_filt["TIME"], df_act_filt[columna_y], 1)
         p_act = np.poly1d(z_act)
         ax.plot(
@@ -232,7 +260,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
             linewidth=2,
         )
 
-        # Valores de la Mediana
         mediana_act = df_act_filt[columna_y].median()
         mediana_prop = df_prop_filt[columna_y].median()
 
@@ -255,7 +282,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
             color=color_propuesto,
         )
 
-        # Estética
         ax.set_xlim(x_min, x_max)
         if y_min is not None:
           ax.set_ylim(bottom=y_min)
@@ -323,11 +349,9 @@ if archivo_actual is not None and archivo_propuesto is not None:
         )
 
         plt.tight_layout()
-
-        # Mostrar en Streamlit
         st.pyplot(fig)
 
-        # Botón de descarga en alta calidad (300 DPI)
+        # Descarga a 300 DPI
         img_buffer = io.BytesIO()
         fig.savefig(img_buffer, format="png", dpi=300, bbox_inches="tight")
         img_buffer.seek(0)
@@ -343,7 +367,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
         plt.close(fig)
 
       # ==========================================
-      # 5. RENDERIZAR GRÁFICAS EN LA APP
+      # 5. RENDERIZAR GRÁFICAS
       # ==========================================
       st.markdown("---")
       mostrar_grafica_comparativa(
