@@ -36,276 +36,302 @@ with col_up2:
   )
 
 if archivo_actual is not None and archivo_propuesto is not None:
-  # Leer los dataframes
-  df_actual = pd.read_csv(archivo_actual)
-  df_propuesto = pd.read_csv(archivo_propuesto)
+  try:
+    # Leer detectando el separador automáticamente
+    df_actual = pd.read_csv(archivo_actual, sep=None, engine="python")
+    df_propuesto = pd.read_csv(archivo_propuesto, sep=None, engine="python")
 
-  st.success("¡Ambos archivos cargados correctamente!")
+    # Limpiar espacios en nombres de columnas
+    df_actual.columns = df_actual.columns.str.strip()
+    df_propuesto.columns = df_propuesto.columns.str.strip()
 
-  columnas = ["Fuerza", "Energia", "Potencia"]
+    st.success("¡Ambos archivos cargados y leídos correctamente!")
 
-  # Verificar si las columnas existen en ambos archivos para evitar errores
-  columnas_validas = all(col in df_actual.columns for col in columnas) and all(
-      col in df_propuesto.columns for col in columnas
-  )
+    columnas = ["Fuerza", "Energia", "Potencia"]
 
-  if not columnas_validas:
-    st.error(
-        "⚠️ Los archivos CSV deben contener obligatoriamente las columnas:"
-        f" {columnas} y 'TIME'."
-    )
-  else:
-    # ==========================================
-    # 2. CÁLCULO DE ESTADÍSTICAS
-    # ==========================================
-    stats_actual = df_actual[columnas].agg(["mean", "max", "min", "median"])
-    stats_propuesto = df_propuesto[columnas].agg(["mean", "max", "min", "median"])
-
-    stats_actual.index = ["promedio", "max", "min", "mediana"]
-    stats_propuesto.index = ["promedio", "max", "min", "mediana"]
-
-    st.markdown("---")
-    st.subheader("📈 Estadísticas y Comparativa")
-
-    tab1, tab2, tab3 = st.tabs(
-        ["Modelo Actual", "Modelo Propuesto", "Comparativa de Medianas"]
+    # Verificar si las columnas existen
+    columnas_validas = (
+        all(col in df_actual.columns for col in columnas)
+        and all(col in df_propuesto.columns for col in columnas)
+        and ("TIME" in df_actual.columns)
+        and ("TIME" in df_propuesto.columns)
     )
 
-    with tab1:
-      st.write("### Estadísticas: MODELO ACTUAL")
-      st.dataframe(stats_actual.style.format({}), use_container_width=True)
-
-    with tab2:
-      st.write("### Estadísticas: MODELO PROPUESTO")
-      st.dataframe(stats_propuesto.style.format({}), use_container_width=True)
-
-    with tab3:
-      # Comparativa porcentual de Medianas
-      mediana_actual = stats_actual.loc["mediana"]
-      mediana_propuesta = stats_propuesto.loc["mediana"]
-      variacion_pct = ((mediana_propuesta - mediana_actual) / mediana_actual) * 100
-
-      tabla_comparativa = pd.DataFrame({
-          "Mediana Actual": mediana_actual,
-          "Mediana Propuesta": mediana_propuesta,
-          "Variación (%)": variacion_pct,
-      })
-      st.write("### Comparativa de Medianas")
-      st.dataframe(
-          tabla_comparativa.style.format({
-              "Mediana Actual": "{:.2f}",
-              "Mediana Propuesta": "{:.2f}",
-              "Variación (%)": "{:+.2f}%",
-          }),
-          use_container_width=True,
+    if not columnas_validas:
+      st.error(
+          "⚠️ Los archivos CSV deben contener las columnas: 'Fuerza',"
+          f" 'Energia', 'Potencia' y 'TIME'. Columnas encontradas en Actual:"
+          f" {list(df_actual.columns)}"
+      )
+    else:
+      # ==========================================
+      # 2. CÁLCULO DE ESTADÍSTICAS
+      # ==========================================
+      stats_actual = df_actual[columnas].agg(["mean", "max", "min", "median"])
+      stats_propuesto = df_propuesto[columnas].agg(
+          ["mean", "max", "min", "median"]
       )
 
-    # ==========================================
-    # 3. CONFIGURACIÓN DE RANGO DE TIEMPO INTERACTIVO
-    # ==========================================
-    st.markdown("---")
-    st.subheader("⏱️ Configuración del Rango de Tiempo para las Gráficas")
+      stats_actual.index = ["promedio", "max", "min", "mediana"]
+      stats_propuesto.index = ["promedio", "max", "min", "mediana"]
 
-    c_min, c_max = st.columns(2)
-    with c_min:
-      x_min = st.number_input(
-          "Segundo de INICIO", value=8.0, step=0.1, format="%.2f"
-      )
-    with c_max:
-      x_max = st.number_input(
-          "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
+      st.markdown("---")
+      st.subheader("📈 Estadísticas y Comparativa")
+
+      tab1, tab2, tab3 = st.tabs(
+          ["Modelo Actual", "Modelo Propuesto", "Comparativa de Medianas"]
       )
 
-    salto_x = 0.20 if (x_max - x_min) <= 3 else 0.50
-    color_actual = "darkgray"
-    color_propuesto = "#00A2E8"
+      with tab1:
+        st.write("### Estadísticas: MODELO ACTUAL")
+        st.dataframe(stats_actual.style.format({}), use_container_width=True)
 
-    sns.set_style("white")
+      with tab2:
+        st.write("### Estadísticas: MODELO PROPUESTO")
+        st.dataframe(
+            stats_propuesto.style.format({}), use_container_width=True
+        )
 
-    # ==========================================
-    # 4. FUNCIÓN DE GRÁFICA ADAPTADA A STREAMLIT
-    # ==========================================
-    def mostrar_grafica_comparativa(
-        columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
-    ):
-      fig, ax = plt.subplots(figsize=(16, 5))
+      with tab3:
+        # Comparativa porcentual de Medianas
+        mediana_actual = stats_actual.loc["mediana"]
+        mediana_propuesta = stats_propuesto.loc["mediana"]
+        variacion_pct = (
+            (mediana_propuesta - mediana_actual) / mediana_actual
+        ) * 100
 
-      # Filtrar datos al rango seleccionado
-      df_act_filt = df_actual[
-          (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
-      ]
-      df_prop_filt = df_propuesto[
-          (df_propuesto["TIME"] >= x_min) & (df_propuesto["TIME"] <= x_max)
-      ]
+        tabla_comparativa = pd.DataFrame({
+            "Mediana Actual": mediana_actual,
+            "Mediana Propuesta": mediana_propuesta,
+            "Variación (%)": variacion_pct,
+        })
+        st.write("### Comparativa de Medianas")
+        st.dataframe(
+            tabla_comparativa.style.format({
+                "Mediana Actual": "{:.2f}",
+                "Mediana Propuesta": "{:.2f}",
+                "Variación (%)": "{:+.2f}%",
+            }),
+            use_container_width=True,
+        )
 
-      if df_act_filt.empty or df_prop_filt.empty:
-        st.warning(
-            f"⚠️ No hay datos suficientes entre {x_min}s y {x_max}s para"
-            f" {columna_y}."
+      # ==========================================
+      # 3. CONFIGURACIÓN DE RANGO DE TIEMPO INTERACTIVO
+      # ==========================================
+      st.markdown("---")
+      st.subheader("⏱️ Configuración del Rango de Tiempo para las Gráficas")
+
+      c_min, c_max = st.columns(2)
+      with c_min:
+        x_min = st.number_input(
+            "Segundo de INICIO", value=8.0, step=0.1, format="%.2f"
+        )
+      with c_max:
+        x_max = st.number_input(
+            "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
+        )
+
+      salto_x = 0.20 if (x_max - x_min) <= 3 else 0.50
+      color_actual = "darkgray"
+      color_propuesto = "#00A2E8"
+
+      sns.set_style("white")
+
+      # ==========================================
+      # 4. FUNCIÓN DE GRÁFICA ADAPTADA A STREAMLIT
+      # ==========================================
+      def mostrar_grafica_comparativa(
+          columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
+      ):
+        fig, ax = plt.subplots(figsize=(16, 5))
+
+        # Filtrar datos al rango seleccionado
+        df_act_filt = df_actual[
+            (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
+        ]
+        df_prop_filt = df_propuesto[
+            (df_propuesto["TIME"] >= x_min) & (df_propuesto["TIME"] <= x_max)
+        ]
+
+        if df_act_filt.empty or df_prop_filt.empty:
+          st.warning(
+              f"⚠️ No hay datos suficientes entre {x_min}s y {x_max}s para"
+              f" {columna_y}."
+          )
+          plt.close(fig)
+          return
+
+        # Graficar curvas reales
+        sns.lineplot(
+            data=df_act_filt,
+            x="TIME",
+            y=columna_y,
+            color=color_actual,
+            ax=ax,
+            linewidth=1.2,
+        )
+        sns.lineplot(
+            data=df_prop_filt,
+            x="TIME",
+            y=columna_y,
+            color=color_propuesto,
+            ax=ax,
+            linewidth=1.2,
+        )
+
+        # Líneas de Tendencia
+        z_act = np.polyfit(df_act_filt["TIME"], df_act_filt[columna_y], 1)
+        p_act = np.poly1d(z_act)
+        ax.plot(
+            df_act_filt["TIME"],
+            p_act(df_act_filt["TIME"]),
+            color=color_actual,
+            linestyle="--",
+            linewidth=2,
+        )
+
+        z_prop = np.polyfit(df_prop_filt["TIME"], df_prop_filt[columna_y], 1)
+        p_prop = np.poly1d(z_prop)
+        ax.plot(
+            df_prop_filt["TIME"],
+            p_prop(df_prop_filt["TIME"]),
+            color=color_propuesto,
+            linestyle="--",
+            linewidth=2,
+        )
+
+        # Valores de la Mediana
+        mediana_act = df_act_filt[columna_y].median()
+        mediana_prop = df_prop_filt[columna_y].median()
+
+        ax.text(
+            0.0,
+            1.15,
+            f"{mediana_act:.2f} {unidad} (ACTUAL)",
+            transform=ax.transAxes,
+            fontsize=12,
+            fontweight="bold",
+            color="gray",
+        )
+        ax.text(
+            0.0,
+            1.05,
+            f"{mediana_prop:.2f} {unidad} (Tega)",
+            transform=ax.transAxes,
+            fontsize=12,
+            fontweight="bold",
+            color=color_propuesto,
+        )
+
+        # Estética
+        ax.set_xlim(x_min, x_max)
+        if y_min is not None:
+          ax.set_ylim(bottom=y_min)
+          ax.axhline(
+              y=y_min,
+              color="lightskyblue",
+              linestyle="--",
+              linewidth=1,
+              alpha=0.8,
+          )
+
+        for spine in ["top", "right", "bottom", "left"]:
+          ax.spines[spine].set_visible(False)
+
+        ax.tick_params(axis="y", length=0)
+        ax.tick_params(axis="x", rotation=90)
+        ax.xaxis.set_major_locator(MultipleLocator(salto_x))
+        ax.yaxis.grid(
+            True, color="plum", linestyle="--", linewidth=0.5, alpha=0.8
+        )
+
+        ax.set_title(titulo, fontsize=16, fontweight="bold", pad=40)
+        ax.set_xlabel(
+            "Tiempo (s)",
+            fontsize=12,
+            fontweight="bold",
+            color="darkorange",
+            labelpad=10,
+        )
+        ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color_y)
+
+        leyenda_items = [
+            Line2D([0], [0], color=color_actual, lw=1.5, label="ACTUAL"),
+            Line2D(
+                [0],
+                [0],
+                color=color_actual,
+                lw=1.5,
+                linestyle="--",
+                label="Lineal (ACTUAL)",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color=color_propuesto,
+                lw=1.5,
+                label="Valor propuesto (TEGA)",
+            ),
+            Line2D(
+                [0],
+                [0],
+                color=color_propuesto,
+                lw=1.5,
+                linestyle="--",
+                label="Lineal (Valor propuesto)",
+            ),
+        ]
+        ax.legend(
+            handles=leyenda_items,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.25),
+            ncol=2,
+            frameon=False,
+            fontsize=11,
+        )
+
+        plt.tight_layout()
+
+        # Mostrar en Streamlit
+        st.pyplot(fig)
+
+        # Botón de descarga en alta calidad (300 DPI)
+        img_buffer = io.BytesIO()
+        fig.savefig(img_buffer, format="png", dpi=300, bbox_inches="tight")
+        img_buffer.seek(0)
+
+        st.download_button(
+            label=(
+                f"📥 Descargar Gráfica '{titulo}' en Alta Calidad (PNG 300 DPI)"
+            ),
+            data=img_buffer,
+            file_name=f"grafica_{columna_y.lower()}.png",
+            mime="image/png",
         )
         plt.close(fig)
-        return
 
-      # Graficar curvas reales
-      sns.lineplot(
-          data=df_act_filt,
-          x="TIME",
-          y=columna_y,
-          color=color_actual,
-          ax=ax,
-          linewidth=1.2,
+      # ==========================================
+      # 5. RENDERIZAR GRÁFICAS EN LA APP
+      # ==========================================
+      st.markdown("---")
+      mostrar_grafica_comparativa(
+          "Fuerza",
+          "FUERZA COMPRESIVA",
+          "Fuerza Compresiva (N)",
+          unidad="N",
+          y_min=4000,
       )
-      sns.lineplot(
-          data=df_prop_filt,
-          x="TIME",
-          y=columna_y,
-          color=color_propuesto,
-          ax=ax,
-          linewidth=1.2,
+      st.markdown("---")
+      mostrar_grafica_comparativa(
+          "Energia", "ENERGÍA CINÉTICA", "Energía (J)", unidad="J"
       )
-
-      # Líneas de Tendencia
-      z_act = np.polyfit(df_act_filt["TIME"], df_act_filt[columna_y], 1)
-      p_act = np.poly1d(z_act)
-      ax.plot(
-          df_act_filt["TIME"],
-          p_act(df_act_filt["TIME"]),
-          color=color_actual,
-          linestyle="--",
-          linewidth=2,
+      st.markdown("---")
+      mostrar_grafica_comparativa(
+          "Potencia", "POTENCIA CONSUMIDA", "Potencia (MW)", unidad="MW"
       )
 
-      z_prop = np.polyfit(df_prop_filt["TIME"], df_prop_filt[columna_y], 1)
-      p_prop = np.poly1d(z_prop)
-      ax.plot(
-          df_prop_filt["TIME"],
-          p_prop(df_prop_filt["TIME"]),
-          color=color_propuesto,
-          linestyle="--",
-          linewidth=2,
-      )
-
-      # Valores de la Mediana
-      mediana_act = df_act_filt[columna_y].median()
-      mediana_prop = df_prop_filt[columna_y].median()
-
-      ax.text(
-          0.0,
-          1.15,
-          f"{mediana_act:.2f} {unidad} (ACTUAL)",
-          transform=ax.transAxes,
-          fontsize=12,
-          fontweight="bold",
-          color="gray",
-      )
-      ax.text(
-          0.0,
-          1.05,
-          f"{mediana_prop:.2f} {unidad} (Tega)",
-          transform=ax.transAxes,
-          fontsize=12,
-          fontweight="bold",
-          color=color_propuesto,
-      )
-
-      # Estética
-      ax.set_xlim(x_min, x_max)
-      if y_min is not None:
-        ax.set_ylim(bottom=y_min)
-        ax.axhline(
-            y=y_min, color="lightskyblue", linestyle="--", linewidth=1, alpha=0.8
-        )
-
-      for spine in ["top", "right", "bottom", "left"]:
-        ax.spines[spine].set_visible(False)
-
-      ax.tick_params(axis="y", length=0)
-      ax.tick_params(axis="x", rotation=90)
-      ax.xaxis.set_major_locator(MultipleLocator(salto_x))
-      ax.yaxis.grid(True, color="plum", linestyle="--", linewidth=0.5, alpha=0.8)
-
-      ax.set_title(titulo, fontsize=16, fontweight="bold", pad=40)
-      ax.set_xlabel(
-          "Tiempo (s)",
-          fontsize=12,
-          fontweight="bold",
-          color="darkorange",
-          labelpad=10,
-      )
-      ax.set_ylabel(ylabel, fontsize=12, fontweight="bold", color=color_y)
-
-      leyenda_items = [
-          Line2D([0], [0], color=color_actual, lw=1.5, label="ACTUAL"),
-          Line2D(
-              [0],
-              [0],
-              color=color_actual,
-              lw=1.5,
-              linestyle="--",
-              label="Lineal (ACTUAL)",
-          ),
-          Line2D(
-              [0],
-              [0],
-              color=color_propuesto,
-              lw=1.5,
-              label="Valor propuesto (TEGA)",
-          ),
-          Line2D(
-              [0],
-              [0],
-              color=color_propuesto,
-              lw=1.5,
-              linestyle="--",
-              label="Lineal (Valor propuesto)",
-          ),
-      ]
-      ax.legend(
-          handles=leyenda_items,
-          loc="upper center",
-          bbox_to_anchor=(0.5, -0.25),
-          ncol=2,
-          frameon=False,
-          fontsize=11,
-      )
-
-      plt.tight_layout()
-
-      # Mostrar en Streamlit
-      st.pyplot(fig)
-
-      # Botón de descarga en alta calidad (300 DPI)
-      img_buffer = io.BytesIO()
-      fig.savefig(img_buffer, format="png", dpi=300, bbox_inches="tight")
-      img_buffer.seek(0)
-
-      st.download_button(
-          label=f"📥 Descargar Gráfica '{titulo}' en Alta Calidad (PNG 300 DPI)",
-          data=img_buffer,
-          file_name=f"grafica_{columna_y.lower()}.png",
-          mime="image/png",
-      )
-      plt.close(fig)
-
-    # ==========================================
-    # 5. RENDERIZAR GRÁFICAS EN LA APP
-    # ==========================================
-    st.markdown("---")
-    mostrar_grafica_comparativa(
-        "Fuerza",
-        "FUERZA COMPRESIVA",
-        "Fuerza Compresiva (N)",
-        unidad="N",
-        y_min=4000,
-    )
-    st.markdown("---")
-    mostrar_grafica_comparativa(
-        "Energia", "ENERGÍA CINÉTICA", "Energía (J)", unidad="J"
-    )
-    st.markdown("---")
-    mostrar_grafica_comparativa(
-        "Potencia", "POTENCIA CONSUMIDA", "Potencia (MW)", unidad="MW"
-    )
+  except Exception as e:
+    st.error(f"Error al procesar los archivos: {e}")
 else:
   st.info(
       "👆 Por favor, sube ambos archivos CSV en la parte superior para comenzar"
