@@ -67,8 +67,8 @@ with st.sidebar:
 
   # Firma discreta al final de la barra lateral
   st.markdown("---")
-  st.caption("🛠️ **Desarrollado por:** Julio Tirado")
-  st.caption("💡 *Intern PMG Mill*")
+  st.caption(" **Desarrollado por:** Julio Tirado")
+  st.caption(" *Intern PMG Mill*")
 
 
 # ==========================================
