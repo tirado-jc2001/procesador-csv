@@ -18,6 +18,32 @@ st.write(
     " gráficas comparativas en alta calidad."
 )
 
+
+# Función para encontrar la fila donde empiezan los datos tabulares
+def cargar_csv_inteligente(file_bytes):
+  # Leer líneas como texto para encontrar el encabezado real
+  content = file_bytes.getvalue().decode("utf-8", errors="ignore").splitlines()
+
+  header_line = 0
+  for i, line in enumerate(content[:50]):  # Inspecciona las primeras 50 filas
+    # Si encuentra las palabras clave de la tabla, esa es la fila del encabezado
+    if ("TIME" in line or "Time" in line) and (
+        "Fuerza" in line or "Force" in line or "Energia" in line
+    ):
+      header_line = i
+      break
+
+  # Rebobinar el buffer de lectura
+  file_bytes.seek(0)
+
+  # Cargar el dataframe omitiendo el encabezado previo
+  df = pd.read_csv(
+      file_bytes, skiprows=header_line, sep=None, engine="python", on_bad_lines="skip"
+  )
+  df.columns = df.columns.str.strip()
+  return df
+
+
 # ==========================================
 # 1. SUBIDA DE ARCHIVOS EN STREAMLIT
 # ==========================================
@@ -37,17 +63,18 @@ with col_up2:
 
 if archivo_actual is not None and archivo_propuesto is not None:
   try:
-    # Leer detectando el separador automáticamente
-    df_actual = pd.read_csv(archivo_actual, sep=None, engine="python")
-    df_propuesto = pd.read_csv(archivo_propuesto, sep=None, engine="python")
+    # Cargar CSV omitiendo las líneas de metadata iniciales
+    df_actual = cargar_csv_inteligente(archivo_actual)
+    df_propuesto = cargar_csv_inteligente(archivo_propuesto)
 
-    # Limpiar espacios en nombres de columnas
-    df_actual.columns = df_actual.columns.str.strip()
-    df_propuesto.columns = df_propuesto.columns.str.strip()
-
-    st.success("¡Ambos archivos cargados y leídos correctamente!")
+    st.success("¡Ambos archivos cargados y procesados correctamente!")
 
     columnas = ["Fuerza", "Energia", "Potencia"]
+
+    # Normalizar nombre de columna TIME si viene en minúsculas
+    for df in [df_actual, df_propuesto]:
+      if "TIME" not in df.columns and "Time" in df.columns:
+        df.rename(columns={"Time": "TIME"}, inplace=True)
 
     # Verificar si las columnas existen
     columnas_validas = (
@@ -59,11 +86,16 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
     if not columnas_validas:
       st.error(
-          "⚠️ Los archivos CSV deben contener las columnas: 'Fuerza',"
-          f" 'Energia', 'Potencia' y 'TIME'. Columnas encontradas en Actual:"
-          f" {list(df_actual.columns)}"
+          "⚠️ No se encontraron todas las columnas requeridas ('Fuerza',"
+          " 'Energia', 'Potencia' y 'TIME').\n\n"
+          f"Columnas detectadas en Actual: {list(df_actual.columns)}"
       )
     else:
+      # Convertir columnas a formato numérico por seguridad
+      for col in columnas + ["TIME"]:
+        df_actual[col] = pd.to_numeric(df_actual[col], errors="coerce")
+        df_propuesto[col] = pd.to_numeric(df_propuesto[col], errors="coerce")
+
       # ==========================================
       # 2. CÁLCULO DE ESTADÍSTICAS
       # ==========================================
@@ -84,12 +116,12 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
       with tab1:
         st.write("### Estadísticas: MODELO ACTUAL")
-        st.dataframe(stats_actual.style.format({}), use_container_width=True)
+        st.dataframe(stats_actual.style.format("{:.2f}"), use_container_width=True)
 
       with tab2:
         st.write("### Estadísticas: MODELO PROPUESTO")
         st.dataframe(
-            stats_propuesto.style.format({}), use_container_width=True
+            stats_propuesto.style.format("{:.2f}"), use_container_width=True
         )
 
       with tab3:
@@ -148,10 +180,10 @@ if archivo_actual is not None and archivo_propuesto is not None:
         # Filtrar datos al rango seleccionado
         df_act_filt = df_actual[
             (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
-        ]
+        ].dropna(subset=["TIME", columna_y])
         df_prop_filt = df_propuesto[
             (df_propuesto["TIME"] >= x_min) & (df_propuesto["TIME"] <= x_max)
-        ]
+        ].dropna(subset=["TIME", columna_y])
 
         if df_act_filt.empty or df_prop_filt.empty:
           st.warning(
