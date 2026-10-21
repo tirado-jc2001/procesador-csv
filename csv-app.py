@@ -15,15 +15,24 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# Estilo visual de la barra lateral (Azul casi celeste)
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {
+            background-color: #E6F3FA;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ==========================================
 #  BARRA LATERAL (SIDEBAR)
 # ==========================================
 with st.sidebar:
-  # 1. Logo de la Empresa (si subes 'logo.png' a GitHub úsalo aquí)
   try:
-    st.image(
-        "https://tegaindustries.hiringroom.com/data/accounts/tegaindustries/profile.jpg?version=", use_container_width=True
-    )  # O cambia 'logo.png' por una URL directa si prefieres
+    st.image("logo.png", use_container_width=True)
   except Exception:
     st.title("🏢 TEGA INDUSTRIES")
 
@@ -58,17 +67,12 @@ with st.sidebar:
         "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
     )
 
-  color_actual = st.color_picker(
-      "Color Modelo Actual", value="#A9A9A9"
-  )  # Gris
-  color_propuesto = st.color_picker(
-      "Color Modelo Propuesto", value="#00A2E8"
-  )  # Azul TEGA
+  color_actual = st.color_picker("Color Modelo Actual", value="#A9A9A9")
+  color_propuesto = st.color_picker("Color Modelo Propuesto", value="#00A2E8")
 
-  # Firma discreta al final de la barra lateral
   st.markdown("---")
-  st.caption(" **Desarrollado por:** Julio Tirado")
-  st.caption(" *Intern PMG Mill*")
+  st.caption("🛠️ **Desarrollado por:** Julio Tirado")
+  st.caption("💡 *Simulación y Análisis de Proyectos*")
 
 
 # ==========================================
@@ -81,29 +85,66 @@ st.write(
 )
 
 
-# Función de limpieza y transformación
+# Función ultra-robusta adaptada para detectar separadores y columnas dinámicamente
 def limpiar_y_transformar(uploaded_file, offset_potencia):
   texto_archivo = uploaded_file.getvalue().decode("utf-8", errors="ignore")
   lineas = texto_archivo.splitlines()
 
+  # Buscar la línea donde inicia 'TIME'
   fila_encabezado = 0
   for i, linea in enumerate(lineas):
     if "TIME" in linea.upper():
       fila_encabezado = i
       break
 
-  df = pd.read_csv(io.StringIO(texto_archivo), skiprows=fila_encabezado)
+  # Cargar detectando separador automáticamente (coma o punto y coma)
+  uploaded_file.seek(0)
+  df = pd.read_csv(
+      uploaded_file, skiprows=fila_encabezado, sep=None, engine="python"
+  )
   df.columns = df.columns.str.strip()
 
-  col_potencia = [col for col in df.columns if "Power" in col][0]
-  col_energia = [col for col in df.columns if "Kinetic" in col][0]
-  col_fuerza = [col for col in df.columns if "Compressive" in col][0]
+  # Búsqueda flexible de columnas por palabras clave
+  col_potencia = None
+  col_energia = None
+  col_fuerza = None
 
+  for col in df.columns:
+    c_lower = col.lower()
+    if any(k in c_lower for k in ["power", "geometry power", "q01 (copy 2)"]):
+      col_potencia = col
+    elif any(k in c_lower for k in ["kinetic", "energy", "ke"]):
+      col_energia = col
+    elif any(
+        k in c_lower for k in ["compressive", "force", "cf", "geometry"]
+    ) and col != col_potencia:
+      if col_fuerza is None:
+        col_fuerza = col
+
+  # Fallback por si alguna columna no coincide exactamente
+  cols_disponibles = [
+      c for c in df.columns if c.upper() not in ["TIME", "TIMESTEP"]
+  ]
+  if col_fuerza is None and len(cols_disponibles) > 0:
+    col_fuerza = cols_disponibles[0]
+  if col_energia is None and len(cols_disponibles) > 1:
+    col_energia = cols_disponibles[1]
+  if col_potencia is None and len(cols_disponibles) > 2:
+    col_potencia = cols_disponibles[2]
+
+  # Aplicar fórmula de potencia y renombrar
   df["Potencia"] = (df[col_potencia] * -1 / 1_000_000) + offset_potencia
-  df = df.rename(columns={col_energia: "Energia", col_fuerza: "Fuerza"})
+  df = df.rename(
+      columns={
+          col_energia: "Energia",
+          col_fuerza: "Fuerza",
+          "Time": "TIME",
+          "time": "TIME",
+      }
+  )
 
-  if "TIME" not in df.columns and "Time" in df.columns:
-    df = df.rename(columns={"Time": "TIME"})
+  if "TIME" not in df.columns:
+    df = df.rename(columns={df.columns[0]: "TIME"})
 
   return df[["TIME", "Fuerza", "Energia", "Potencia"]]
 
@@ -117,20 +158,27 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
     columnas_stats = ["Fuerza", "Energia", "Potencia"]
 
-    # Tarjetas Métricas Rápidas (Resumen Visual)
     st.markdown("### 📊 Resumen Ejecutivo (Medianas)")
     m_act = df_actual[columnas_stats].median()
     m_prop = df_propuesto[columnas_stats].median()
     v_pct = ((m_prop - m_act) / m_act) * 100
 
     c_m1, c_m2, c_m3 = st.columns(3)
-    c_m1.metric("Fuerza Compresiva", f"{m_prop['Fuerza']:.1f} N", f"{v_pct['Fuerza']:+.2f}%")
-    c_m2.metric("Energía Cinética", f"{m_prop['Energia']:.1f} J", f"{v_pct['Energia']:+.2f}%")
-    c_m3.metric("Potencia Consumida", f"{m_prop['Potencia']:.2f} MW", f"{v_pct['Potencia']:+.2f}%")
+    c_m1.metric(
+        "Fuerza Compresiva",
+        f"{m_prop['Fuerza']:.1f} N",
+        f"{v_pct['Fuerza']:+.2f}%",
+    )
+    c_m2.metric(
+        "Energía Cinética", f"{m_prop['Energia']:.1f} J", f"{v_pct['Energia']:+.2f}%"
+    )
+    c_m3.metric(
+        "Potencia Consumida",
+        f"{m_prop['Potencia']:.2f} MW",
+        f"{v_pct['Potencia']:+.2f}%",
+    )
 
     st.markdown("---")
-
-    # Tablas Estadísticas Organizadas
     st.subheader("📈 Estadísticas Detalladas")
     stats_actual = df_actual[columnas_stats].agg(
         ["mean", "max", "min", "median"]
@@ -148,12 +196,10 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
     with tab1:
       st.dataframe(stats_actual.style.format("{:.2f}"), use_container_width=True)
-
     with tab2:
       st.dataframe(
           stats_propuesto.style.format("{:.2f}"), use_container_width=True
       )
-
     with tab3:
       tabla_comparativa = pd.DataFrame({
           "Mediana Actual": m_act,
@@ -169,12 +215,12 @@ if archivo_actual is not None and archivo_propuesto is not None:
           use_container_width=True,
       )
 
-    # Gráficas
     st.markdown("---")
     st.subheader("📉 Gráficas Comparativas de Desempeño")
 
     salto_x = 0.20 if (x_max - x_min) <= 3 else 0.50
     sns.set_style("white")
+
 
     def mostrar_grafica_comparativa(
         columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
@@ -330,6 +376,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
       )
       plt.close(fig)
 
+
     mostrar_grafica_comparativa(
         "Fuerza",
         "FUERZA COMPRESIVA",
@@ -355,7 +402,6 @@ else:
       " el análisis."
   )
 
-# Pie de página sutil en la pantalla principal
 st.markdown("---")
 st.markdown(
     "<div style='text-align: center; color: gray; font-size: 0.85em;'>"
