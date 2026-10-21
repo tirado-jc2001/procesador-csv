@@ -31,14 +31,17 @@ st.markdown(
 #  BARRA LATERAL (SIDEBAR)
 # ==========================================
 with st.sidebar:
+  # 1. Logo de la Empresa (si subes 'logo.png' a GitHub úsalo aquí)
   try:
-    st.image("logo.png", use_container_width=True)
+    st.image(
+        "https://tegaindustries.hiringroom.com/data/accounts/tegaindustries/profile.jpg?version=", use_container_width=True
+    )  # O cambia 'logo.png' por una URL directa si prefieres
   except Exception:
     st.title("🏢 TEGA INDUSTRIES")
 
   st.markdown("---")
   st.header("📂 Carga de Archivos")
-
+    
   archivo_actual = st.file_uploader(
       "1️⃣ Modelo Actual (CSV)", type=["csv"], key="actual"
   )
