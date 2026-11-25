@@ -27,6 +27,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+FACTORES_FUERZA = {
+    "N": 1.0,
+    "kN": 1e-3,
+    "MN": 1e-6,
+    "kgf": 1.0 / 9.80665,
+    "tonf": 1.0 / 9806.65,
+}
+
+FACTORES_ENERGIA = {
+    "N·m": 1.0,
+    "J": 1.0,
+    "kJ": 1e-3,
+    "MJ": 1e-6,
+}
+
 
 def leer_csv_rocky(uploaded_file, rol_variable):
   """Lee un CSV exportado por Ansys Rocky (separador ';' y coma decimal ',')
@@ -44,7 +59,6 @@ def leer_csv_rocky(uploaded_file, rol_variable):
         f"El archivo '{uploaded_file.name}' no tiene al menos 2 columnas."
     )
 
-  # Columna de tiempo: prioriza 'Date [s]' o 'TIME'
   col_tiempo = None
   for col in df.columns:
     c_low = col.lower()
@@ -54,7 +68,6 @@ def leer_csv_rocky(uploaded_file, rol_variable):
   if col_tiempo is None:
     col_tiempo = df.columns[0]
 
-  # Columna de variable: primera columna distinta al tiempo
   cols_valor = [c for c in df.columns if c != col_tiempo]
   col_valor = cols_valor[0]
 
@@ -75,10 +88,14 @@ def construir_dataframe_modelo(
     potencia_nominal_mw=0.0,
     unidad_potencia_archivo="W",
     invertir_signo_potencia=False,
+    factor_fuerza=1.0,
+    factor_energia=1.0,
 ):
-  """Une los 3 CSV de un modelo por 'TIME' y calcula Potencia (MW) + Potencia Nominal."""
-  df_f = leer_csv_rocky(file_fuerza, "Fuerza")
-  df_e = leer_csv_rocky(file_energia, "Energia")
+  """Une los 3 CSV de un modelo por 'TIME', convierte Fuerza y Energía,
+    y calcula Potencia (MW) + Potencia Nominal.
+    """
+  df_f = leer_csv_rocky(file_fuerza, "Fuerza_raw")
+  df_e = leer_csv_rocky(file_energia, "Energia_raw")
   df_p = leer_csv_rocky(file_potencia, "Potencia_raw")
 
   dfs = [d for d in [df_f, df_e, df_p] if d is not None]
@@ -91,15 +108,21 @@ def construir_dataframe_modelo(
 
   df_total = df_total.sort_values("TIME").reset_index(drop=True)
 
-  for col in ["Fuerza", "Energia"]:
-    if col not in df_total.columns:
-      df_total[col] = np.nan
+  if "Fuerza_raw" in df_total.columns:
+    df_total["Fuerza"] = df_total["Fuerza_raw"] * factor_fuerza
+  else:
+    df_total["Fuerza"] = np.nan
+
+  if "Energia_raw" in df_total.columns:
+    df_total["Energia"] = df_total["Energia_raw"] * factor_energia
+  else:
+    df_total["Energia"] = np.nan
 
   if "Potencia_raw" in df_total.columns:
-    factor = {"W": 1e-6, "kW": 1e-3, "MW": 1.0}[unidad_potencia_archivo]
+    factor_p = {"W": 1e-6, "kW": 1e-3, "MW": 1.0}[unidad_potencia_archivo]
     signo = -1.0 if invertir_signo_potencia else 1.0
     df_total["Potencia"] = (
-        df_total["Potencia_raw"] * signo * factor
+        df_total["Potencia_raw"] * signo * factor_p
     ) + potencia_nominal_mw
   else:
     df_total["Potencia"] = np.nan
@@ -182,6 +205,18 @@ with st.sidebar:
       format="%.3f",
       help="Se suma a la potencia convertida a MW del Modelo Propuesto.",
   )
+  unidad_fuerza = st.selectbox(
+      "Unidad de Fuerza Compresiva:",
+      options=list(FACTORES_FUERZA.keys()),
+      index=0,
+      help="Convierte la fuerza desde [N] del CSV a la unidad seleccionada.",
+  )
+  unidad_energia = st.selectbox(
+      "Unidad de Energía Cinética:",
+      options=list(FACTORES_ENERGIA.keys()),
+      index=0,
+      help="Convierte la energía desde [N·m / J] del CSV a la unidad seleccionada.",
+  )
   unidad_pot = st.selectbox(
       "Unidad en CSV de Potencia:", options=["W", "kW", "MW"], index=0
   )
@@ -239,6 +274,9 @@ tiene_algo_propuesto = any(
 
 if tiene_algo_actual and tiene_algo_propuesto:
   try:
+    factor_f = FACTORES_FUERZA[unidad_fuerza]
+    factor_e = FACTORES_ENERGIA[unidad_energia]
+
     df_actual = construir_dataframe_modelo(
         act_fuerza,
         act_energia,
@@ -246,6 +284,8 @@ if tiene_algo_actual and tiene_algo_propuesto:
         potencia_nominal_mw=pot_nom_actual,
         unidad_potencia_archivo=unidad_pot,
         invertir_signo_potencia=invertir_pot,
+        factor_fuerza=factor_f,
+        factor_energia=factor_e,
     )
     df_propuesto = construir_dataframe_modelo(
         prop_fuerza,
@@ -254,6 +294,8 @@ if tiene_algo_actual and tiene_algo_propuesto:
         potencia_nominal_mw=pot_nom_propuesto,
         unidad_potencia_archivo=unidad_pot,
         invertir_signo_potencia=invertir_pot,
+        factor_fuerza=factor_f,
+        factor_energia=factor_e,
     )
 
     if recortar_comun:
@@ -275,15 +317,15 @@ if tiene_algo_actual and tiene_algo_propuesto:
 
     c_m1, c_m2, c_m3 = st.columns(3)
     c_m1.metric(
-        "Fuerza Compresiva",
-        f"{m_prop['Fuerza']:.2f} N"
+        f"Fuerza Compresiva ({unidad_fuerza})",
+        f"{m_prop['Fuerza']:.2f} {unidad_fuerza}"
         if pd.notna(m_prop["Fuerza"])
         else "Sin dato",
         f"{v_pct['Fuerza']:+.2f}%" if pd.notna(v_pct["Fuerza"]) else None,
     )
     c_m2.metric(
-        "Energía Cinética",
-        f"{m_prop['Energia']:.2f} N·m"
+        f"Energía Cinética ({unidad_energia})",
+        f"{m_prop['Energia']:.2f} {unidad_energia}"
         if pd.notna(m_prop["Energia"])
         else "Sin dato",
         f"{v_pct['Energia']:+.2f}%" if pd.notna(v_pct["Energia"]) else None,
@@ -477,11 +519,17 @@ if tiene_algo_actual and tiene_algo_propuesto:
       plt.close(fig)
 
     mostrar_grafica_comparativa(
-        "Fuerza", "FUERZA COMPRESIVA", "Fuerza Compresiva (N)", unidad="N"
+        "Fuerza",
+        "FUERZA COMPRESIVA",
+        f"Fuerza Compresiva ({unidad_fuerza})",
+        unidad=unidad_fuerza,
     )
     st.markdown("---")
     mostrar_grafica_comparativa(
-        "Energia", "ENERGÍA CINÉTICA", "Energía (N·m)", unidad="N·m"
+        "Energia",
+        "ENERGÍA CINÉTICA",
+        f"Energía ({unidad_energia})",
+        unidad=unidad_energia,
     )
     st.markdown("---")
     mostrar_grafica_comparativa(
