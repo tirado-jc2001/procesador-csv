@@ -9,13 +9,13 @@ import streamlit as st
 
 # Configuración inicial de la página
 st.set_page_config(
-    page_title="Comparativa de Modelos - Tega Industries",
+    page_title="Comparativa Rocky DEM - Tega Industries",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Estilo visual de la barra lateral (Azul casi celeste)
+# Estilo visual de la barra lateral
 st.markdown(
     """
     <style>
@@ -27,45 +27,153 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+def leer_csv_rocky(uploaded_file, rol_variable):
+  """Lee un CSV exportado por Ansys Rocky (separador ';' y coma decimal ',')
+    y devuelve un DataFrame con ['TIME', rol_variable].
+    """
+  if uploaded_file is None:
+    return None
+
+  uploaded_file.seek(0)
+  df = pd.read_csv(uploaded_file, sep=";", decimal=",")
+  df.columns = [str(c).strip() for c in df.columns]
+
+  if len(df.columns) < 2:
+    raise ValueError(
+        f"El archivo '{uploaded_file.name}' no tiene al menos 2 columnas."
+    )
+
+  # Columna de tiempo: prioriza 'Date [s]' o 'TIME'
+  col_tiempo = None
+  for col in df.columns:
+    c_low = col.lower()
+    if "date" in c_low or c_low.startswith("time"):
+      col_tiempo = col
+      break
+  if col_tiempo is None:
+    col_tiempo = df.columns[0]
+
+  # Columna de variable: primera columna distinta al tiempo
+  cols_valor = [c for c in df.columns if c != col_tiempo]
+  col_valor = cols_valor[0]
+
+  out = pd.DataFrame({
+      "TIME": pd.to_numeric(df[col_tiempo], errors="coerce"),
+      rol_variable: pd.to_numeric(df[col_valor], errors="coerce"),
+  })
+
+  out = out.dropna(subset=["TIME"]).sort_values("TIME")
+  # Si existieran tiempos duplicados, promedia para evitar explosión en el merge
+  out = out.groupby("TIME", as_index=False)[rol_variable].mean()
+  return out
+
+
+def construir_dataframe_modelo(
+    file_fuerza,
+    file_energia,
+    file_potencia,
+    potencia_nominal_mw=0.0,
+    unidad_potencia_archivo="W",
+    invertir_signo_potencia=False,
+):
+  """Une los 3 CSV de un modelo por 'TIME' y calcula Potencia (MW) + Potencia Nominal."""
+  df_f = leer_csv_rocky(file_fuerza, "Fuerza")
+  df_e = leer_csv_rocky(file_energia, "Energia")
+  df_p = leer_csv_rocky(file_potencia, "Potencia_raw")
+
+  dfs = [d for d in [df_f, df_e, df_p] if d is not None]
+  if not dfs:
+    return None
+
+  df_total = dfs[0]
+  for d in dfs[1:]:
+    df_total = pd.merge(df_total, d, on="TIME", how="outer")
+
+  df_total = df_total.sort_values("TIME").reset_index(drop=True)
+
+  for col in ["Fuerza", "Energia"]:
+    if col not in df_total.columns:
+      df_total[col] = np.nan
+
+  if "Potencia_raw" in df_total.columns:
+    factor = {"W": 1e-6, "kW": 1e-3, "MW": 1.0}[unidad_potencia_archivo]
+    signo = -1.0 if invertir_signo_potencia else 1.0
+    df_total["Potencia"] = (
+        df_total["Potencia_raw"] * signo * factor
+    ) + potencia_nominal_mw
+  else:
+    df_total["Potencia"] = np.nan
+
+  return df_total[["TIME", "Fuerza", "Energia", "Potencia"]]
+
+
 # ==========================================
 #  BARRA LATERAL (SIDEBAR)
 # ==========================================
 with st.sidebar:
-  # 1. Logo de la Empresa mediante URL corporativa
   try:
     st.image("logoTEGA.jpg", use_container_width=True)
   except Exception:
     st.title("🏢 TEGA INDUSTRIES")
 
   st.markdown("---")
-  st.header("📂 Carga de Archivos")
-
-  archivo_actual = st.file_uploader(
-      "1️⃣ Modelo Actual (CSV)", type=["csv"], key="actual"
+  st.header("📂 1. Modelo Actual (3 CSV Rocky)")
+  act_fuerza = st.file_uploader(
+      "Fuerza Compresiva - Actual [N]", type=["csv"], key="act_f"
   )
-  archivo_propuesto = st.file_uploader(
-      "2️⃣ Modelo Propuesto (CSV)", type=["csv"], key="propuesto"
+  act_energia = st.file_uploader(
+      "Energía Cinética - Actual [N·m / J]", type=["csv"], key="act_e"
   )
-
-  st.markdown("---")
-  st.header("⚙️ Offsets de Potencia")
-  potencia_add_actual = st.number_input(
-      "Potencia a sumar ACTUAL (MW):", value=0.0, step=0.1, format="%.2f"
-  )
-  potencia_add_propuesto = st.number_input(
-      "Potencia a sumar PROPUESTO (MW):", value=0.0, step=0.1, format="%.2f"
+  act_potencia = st.file_uploader(
+      "Potencia - Actual [W]", type=["csv"], key="act_p"
   )
 
   st.markdown("---")
-  st.header("🎨 Estilo y Rango")
+  st.header("📂 2. Modelo Propuesto (3 CSV Rocky)")
+  prop_fuerza = st.file_uploader(
+      "Fuerza Compresiva - Propuesto [N]", type=["csv"], key="prop_f"
+  )
+  prop_energia = st.file_uploader(
+      "Energía Cinética - Propuesto [N·m / J]", type=["csv"], key="prop_e"
+  )
+  prop_potencia = st.file_uploader(
+      "Potencia - Propuesto [W]", type=["csv"], key="prop_p"
+  )
+
+  st.markdown("---")
+  st.header("⚡ 3. Potencia Nominal y Unidades")
+  pot_nom_actual = st.number_input(
+      "Potencia Nominal ACTUAL (MW):",
+      value=0.0,
+      step=0.1,
+      format="%.3f",
+      help="Se suma a la potencia convertida a MW del Modelo Actual.",
+  )
+  pot_nom_propuesto = st.number_input(
+      "Potencia Nominal PROPUESTO (MW):",
+      value=0.0,
+      step=0.1,
+      format="%.3f",
+      help="Se suma a la potencia convertida a MW del Modelo Propuesto.",
+  )
+  unidad_pot = st.selectbox(
+      "Unidad en CSV de Potencia:", options=["W", "kW", "MW"], index=0
+  )
+  invertir_pot = st.checkbox(
+      "Invertir signo de Potencia (-1)",
+      value=False,
+      help="En Rocky suele venir positiva; activa solo si necesitas cambiar el signo.",
+  )
+
+  st.markdown("---")
+  st.header("🎨 4. Rango de Tiempo y Estilo")
   col_s1, col_s2 = st.columns(2)
   with col_s1:
-    x_min = st.number_input(
-        "Segundo INICIO", value=8.0, step=0.1, format="%.2f"
-    )
+    x_min = st.number_input("Segundo INICIO", value=8.0, step=0.5, format="%.2f")
   with col_s2:
     x_max = st.number_input(
-        "Segundo FINAL", value=10.0, step=0.1, format="%.2f"
+        "Segundo FINAL", value=25.0, step=0.5, format="%.2f"
     )
 
   color_actual = st.color_picker("Color Modelo Actual", value="#A9A9A9")
@@ -73,121 +181,72 @@ with st.sidebar:
 
   st.markdown("---")
   st.caption("🛠️ **Desarrollado por:** Julio Tirado")
-  st.caption("💡 *Simulación y Análisis de Proyectos*")
+  st.caption("💡 *Simulación DEM y Análisis de Proyectos*")
 
 
 # ==========================================
 # PANTALLA PRINCIPAL
 # ==========================================
-st.title("🚀 Panel de Análisis y Comparación de Modelos DEM")
+st.title("🚀 Comparativa de Simulaciones — Ansys Rocky")
 st.write(
-    "Plataforma interactiva para la evaluación de parámetros de simulación"
-    " (Fuerza, Energía y Potencia)."
+    "Carga los 3 archivos CSV por modelo (Fuerza, Energía y Potencia) e"
+    " ingresa la **Potencia Nominal (MW)** para consolidar y comparar resultados."
 )
 
+tiene_algo_actual = any(x is not None for x in [act_fuerza, act_energia, act_potencia])
+tiene_algo_propuesto = any(
+    x is not None for x in [prop_fuerza, prop_energia, prop_potencia]
+)
 
-# Función ultra-robusta adaptada para detectar separadores y columnas dinámicamente
-def limpiar_y_transformar(uploaded_file, offset_potencia):
-  texto_archivo = uploaded_file.getvalue().decode("utf-8", errors="ignore")
-  lineas = texto_archivo.splitlines()
-
-  # Buscar la línea donde inicia 'TIME'
-  fila_encabezado = 0
-  for i, linea in enumerate(lineas):
-    if "TIME" in linea.upper():
-      fila_encabezado = i
-      break
-
-  # Cargar detectando separador automáticamente (coma o punto y coma)
-  uploaded_file.seek(0)
-  df = pd.read_csv(
-      uploaded_file, skiprows=fila_encabezado, sep=None, engine="python"
-  )
-  df.columns = df.columns.str.strip()
-
-  # Búsqueda flexible de columnas por palabras clave
-  col_potencia = None
-  col_energia = None
-  col_fuerza = None
-
-  for col in df.columns:
-    c_lower = col.lower()
-    if any(k in c_lower for k in ["power", "geometry power", "q01 (copy 2)"]):
-      col_potencia = col
-    elif any(k in c_lower for k in ["kinetic", "energy", "ke"]):
-      col_energia = col
-    elif any(
-        k in c_lower for k in ["compressive", "force", "cf", "geometry"]
-    ) and col != col_potencia:
-      if col_fuerza is None:
-        col_fuerza = col
-
-  # Fallback por si alguna columna no coincide exactamente
-  cols_disponibles = [
-      c for c in df.columns if c.upper() not in ["TIME", "TIMESTEP"]
-  ]
-  if col_fuerza is None and len(cols_disponibles) > 0:
-    col_fuerza = cols_disponibles[0]
-  if col_energia is None and len(cols_disponibles) > 1:
-    col_energia = cols_disponibles[1]
-  if col_potencia is None and len(cols_disponibles) > 2:
-    col_potencia = cols_disponibles[2]
-
-  # Aplicar fórmula de potencia y renombrar
-  df["Potencia"] = (df[col_potencia] * -1 / 1_000_000) + offset_potencia
-  df = df.rename(
-      columns={
-          col_energia: "Energia",
-          col_fuerza: "Fuerza",
-          "Time": "TIME",
-          "time": "TIME",
-      }
-  )
-
-  if "TIME" not in df.columns:
-    df = df.rename(columns={df.columns[0]: "TIME"})
-
-  return df[["TIME", "Fuerza", "Energia", "Potencia"]]
-
-
-if archivo_actual is not None and archivo_propuesto is not None:
+if tiene_algo_actual and tiene_algo_propuesto:
   try:
-    df_actual = limpiar_y_transformar(archivo_actual, potencia_add_actual)
-    df_propuesto = limpiar_y_transformar(
-        archivo_propuesto, potencia_add_propuesto
+    df_actual = construir_dataframe_modelo(
+        act_fuerza,
+        act_energia,
+        act_potencia,
+        potencia_nominal_mw=pot_nom_actual,
+        unidad_potencia_archivo=unidad_pot,
+        invertir_signo_potencia=invertir_pot,
+    )
+    df_propuesto = construir_dataframe_modelo(
+        prop_fuerza,
+        prop_energia,
+        prop_potencia,
+        potencia_nominal_mw=pot_nom_propuesto,
+        unidad_potencia_archivo=unidad_pot,
+        invertir_signo_potencia=invertir_pot,
     )
 
     columnas_stats = ["Fuerza", "Energia", "Potencia"]
 
-    st.markdown("### 📊 Resumen Ejecutivo (Medianas)")
-    m_act = df_actual[columnas_stats].median()
-    m_prop = df_propuesto[columnas_stats].median()
-    v_pct = ((m_prop - m_act) / m_act) * 100
+    st.markdown("### 📊 Resumen Ejecutivo (Medianas en Serie Completa)")
+    m_act = df_actual[columnas_stats].median(skipna=True)
+    m_prop = df_propuesto[columnas_stats].median(skipna=True)
+    v_pct = ((m_prop - m_act) / m_act.replace(0, np.nan)) * 100
 
     c_m1, c_m2, c_m3 = st.columns(3)
     c_m1.metric(
         "Fuerza Compresiva",
-        f"{m_prop['Fuerza']:.1f} N",
-        f"{v_pct['Fuerza']:+.2f}%",
+        f"{m_prop['Fuerza']:.2f} N" if pd.notna(m_prop["Fuerza"]) else "Sin dato",
+        f"{v_pct['Fuerza']:+.2f}%" if pd.notna(v_pct["Fuerza"]) else None,
     )
     c_m2.metric(
-        "Energía Cinética", f"{m_prop['Energia']:.1f} J", f"{v_pct['Energia']:+.2f}%"
+        "Energía Cinética",
+        f"{m_prop['Energia']:.2f} N·m" if pd.notna(m_prop["Energia"]) else "Sin dato",
+        f"{v_pct['Energia']:+.2f}%" if pd.notna(v_pct["Energia"]) else None,
     )
     c_m3.metric(
-        "Potencia Consumida",
-        f"{m_prop['Potencia']:.2f} MW",
-        f"{v_pct['Potencia']:+.2f}%",
+        "Potencia Total (Sim + Nominal)",
+        f"{m_prop['Potencia']:.2f} MW" if pd.notna(m_prop["Potencia"]) else "Sin dato",
+        f"{v_pct['Potencia']:+.2f}%" if pd.notna(v_pct["Potencia"]) else None,
     )
 
     st.markdown("---")
     st.subheader("📈 Estadísticas Detalladas")
-    stats_actual = df_actual[columnas_stats].agg(
-        ["mean", "max", "min", "median"]
-    )
+    stats_actual = df_actual[columnas_stats].agg(["mean", "max", "min", "median"])
     stats_propuesto = df_propuesto[columnas_stats].agg(
         ["mean", "max", "min", "median"]
     )
-
     stats_actual.index = ["promedio", "max", "min", "mediana"]
     stats_propuesto.index = ["promedio", "max", "min", "mediana"]
 
@@ -217,17 +276,14 @@ if archivo_actual is not None and archivo_propuesto is not None:
       )
 
     st.markdown("---")
-    st.subheader("📉 Gráficas Comparativas de Desempeño")
+    st.subheader("📉 Gráficas Comparativas")
 
-    salto_x = 0.20 if (x_max - x_min) <= 3 else 0.50
+    salto_x = 0.50 if (x_max - x_min) <= 5 else 1.0
     sns.set_style("white")
 
-
     def mostrar_grafica_comparativa(
-        columna_y, titulo, ylabel, unidad="", color_y="darkorange", y_min=None
+        columna_y, titulo, ylabel, unidad="", color_y="darkorange"
     ):
-      fig, ax = plt.subplots(figsize=(16, 4.8))
-
       df_act_filt = df_actual[
           (df_actual["TIME"] >= x_min) & (df_actual["TIME"] <= x_max)
       ].dropna(subset=["TIME", columna_y])
@@ -237,11 +293,12 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
       if df_act_filt.empty or df_prop_filt.empty:
         st.warning(
-            f"⚠️ No hay datos suficientes entre {x_min}s y {x_max}s para"
-            f" {columna_y}."
+            f"⚠️ Falta cargar o no hay datos de '{columna_y}' en ambos modelos"
+            f" entre {x_min}s y {x_max}s."
         )
-        plt.close(fig)
         return
+
+      fig, ax = plt.subplots(figsize=(16, 4.8))
 
       sns.lineplot(
           data=df_act_filt,
@@ -249,7 +306,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
           y=columna_y,
           color=color_actual,
           ax=ax,
-          linewidth=1.2,
+          linewidth=1.3,
       )
       sns.lineplot(
           data=df_prop_filt,
@@ -257,24 +314,22 @@ if archivo_actual is not None and archivo_propuesto is not None:
           y=columna_y,
           color=color_propuesto,
           ax=ax,
-          linewidth=1.2,
+          linewidth=1.3,
       )
 
       z_act = np.polyfit(df_act_filt["TIME"], df_act_filt[columna_y], 1)
-      p_act = np.poly1d(z_act)
       ax.plot(
           df_act_filt["TIME"],
-          p_act(df_act_filt["TIME"]),
+          np.poly1d(z_act)(df_act_filt["TIME"]),
           color=color_actual,
           linestyle="--",
           linewidth=2,
       )
 
       z_prop = np.polyfit(df_prop_filt["TIME"], df_prop_filt[columna_y], 1)
-      p_prop = np.poly1d(z_prop)
       ax.plot(
           df_prop_filt["TIME"],
-          p_prop(df_prop_filt["TIME"]),
+          np.poly1d(z_prop)(df_prop_filt["TIME"]),
           color=color_propuesto,
           linestyle="--",
           linewidth=2,
@@ -295,7 +350,7 @@ if archivo_actual is not None and archivo_propuesto is not None:
       ax.text(
           0.0,
           1.05,
-          f"{mediana_prop:.2f} {unidad} (Tega)",
+          f"{mediana_prop:.2f} {unidad} (PROPUESTO)",
           transform=ax.transAxes,
           fontsize=12,
           fontweight="bold",
@@ -303,11 +358,6 @@ if archivo_actual is not None and archivo_propuesto is not None:
       )
 
       ax.set_xlim(x_min, x_max)
-      if y_min is not None:
-        ax.set_ylim(bottom=y_min)
-        ax.axhline(
-            y=y_min, color="lightskyblue", linestyle="--", linewidth=1, alpha=0.8
-        )
 
       for spine in ["top", "right", "bottom", "left"]:
         ax.spines[spine].set_visible(False)
@@ -337,20 +387,14 @@ if archivo_actual is not None and archivo_propuesto is not None:
               linestyle="--",
               label="Lineal (ACTUAL)",
           ),
-          Line2D(
-              [0],
-              [0],
-              color=color_propuesto,
-              lw=1.5,
-              label="Valor propuesto (TEGA)",
-          ),
+          Line2D([0], [0], color=color_propuesto, lw=1.5, label="PROPUESTO"),
           Line2D(
               [0],
               [0],
               color=color_propuesto,
               lw=1.5,
               linestyle="--",
-              label="Lineal (Valor propuesto)",
+              label="Lineal (PROPUESTO)",
           ),
       ]
       ax.legend(
@@ -377,21 +421,19 @@ if archivo_actual is not None and archivo_propuesto is not None:
       )
       plt.close(fig)
 
-
     mostrar_grafica_comparativa(
-        "Fuerza",
-        "FUERZA COMPRESIVA",
-        "Fuerza Compresiva (N)",
-        unidad="N",
-        y_min=4000,
+        "Fuerza", "FUERZA COMPRESIVA", "Fuerza Compresiva (N)", unidad="N"
     )
     st.markdown("---")
     mostrar_grafica_comparativa(
-        "Energia", "ENERGÍA CINÉTICA", "Energía (J)", unidad="J"
+        "Energia", "ENERGÍA CINÉTICA", "Energía (N·m)", unidad="N·m"
     )
     st.markdown("---")
     mostrar_grafica_comparativa(
-        "Potencia", "POTENCIA CONSUMIDA", "Potencia (MW)", unidad="MW"
+        "Potencia",
+        "POTENCIA TOTAL (SIMULACIÓN + NOMINAL)",
+        "Potencia (MW)",
+        unidad="MW",
     )
 
   except Exception as e:
@@ -399,8 +441,8 @@ if archivo_actual is not None and archivo_propuesto is not None:
 
 else:
   st.info(
-      "👈 Por favor, sube ambos archivos CSV en la barra lateral para iniciar"
-      " el análisis."
+      "👈 Sube al menos un archivo del **Modelo Actual** y uno del **Modelo"
+      " Propuesto** en la barra lateral para comenzar."
   )
 
 st.markdown("---")
